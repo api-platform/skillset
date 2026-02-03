@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(composer require:*)",
+      "Bash(docker compose exec php composer require:*)",
+      "Bash(docker compose exec:*)",
+      "Bash(php bin/console debug:router:*)",
+      "Bash(php bin/console api:openapi:export:*)",
+      "Bash(php bin/console:*)"
+    ]
+  }
+}
