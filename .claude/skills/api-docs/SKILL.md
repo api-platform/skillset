@@ -1,6 +1,6 @@
 ---
 name: api-docs
-description: Customize OpenAPI documentation for API Platform resources. Use when adding descriptions, examples, custom responses, or hiding operations from documentation.
+description: Customizes OpenAPI documentation for API Platform resources. Use when adding descriptions, examples, custom responses, hiding operations from documentation, or decorating the OpenAPI factory for global customization.
 ---
 
 # Customizing API Documentation
@@ -10,23 +10,21 @@ API Platform generates OpenAPI v3 documentation automatically. Customize it usin
 ## Operation-Level Customization
 
 ```php
-<?php
 use ApiPlatform\Metadata\Post;
 use ApiPlatform\OpenApi\Model\Operation;
 use ApiPlatform\OpenApi\Model\Response as OpenApiResponse;
 
 #[Post(
     openapi: new Operation(
-        summary: 'Create a new resource',
-        description: 'Creates a resource with the provided data. Sends notification on success.',
+        summary: 'Create a new order',
+        description: 'Creates an order and sends confirmation email.',
         responses: [
-            '201' => new OpenApiResponse(description: 'Resource created successfully'),
-            '400' => new OpenApiResponse(description: 'Invalid input data'),
+            '201' => new OpenApiResponse(description: 'Order created successfully'),
             '422' => new OpenApiResponse(description: 'Validation failed'),
         ]
     )
 )]
-class YourResource {}
+class Order {}
 ```
 
 ## Property Documentation
@@ -34,122 +32,94 @@ class YourResource {}
 ```php
 use ApiPlatform\Metadata\ApiProperty;
 
-class YourResource
+class Order
 {
-    #[ApiProperty(
-        description: 'The unique identifier',
-        example: 1
-    )]
+    #[ApiProperty(description: 'The unique identifier', example: 1)]
     public int $id;
-
-    #[ApiProperty(
-        description: 'Email address for the resource',
-        example: 'user@example.com'
-    )]
-    public string $email;
 
     #[ApiProperty(
         description: 'Current status',
         example: 'pending',
-        openapiContext: [
-            'enum' => ['pending', 'sent', 'delivered', 'failed']
-        ]
+        openapiContext: ['enum' => ['pending', 'shipped', 'delivered']]
     )]
     public string $status;
+
+    #[ApiProperty(
+        genId: false,
+        types: ['https://schema.org/sender'],
+        openapiContext: [
+            'example' => ['address' => 'user@example.com', 'name' => 'John'],
+        ],
+    )]
+    public Recipient $from;
 }
 ```
 
+Use `genId: false` on embedded objects (non-IRI properties) to suppress `@id` generation.
+
 ## Hiding from Documentation
 
-### Hide entire resource
 ```php
+// Hide entire resource
 #[ApiResource(openapi: false)]
-class InternalResource {}
+
+// Hide specific operation
+#[Get(openapi: false)]
+
+// Hide from Hydra entrypoint only (keep in OpenAPI)
+#[Get(hydra: false)]
 ```
 
-### Hide specific operation
-```php
-#[Get(openapi: false)]  // Hidden from OpenAPI
-#[Post()]               // Visible in OpenAPI
-```
-
-### Hide from Hydra only (keep in OpenAPI)
-```php
-#[Get(hydra: false)]  // Not in JSON-LD entrypoint, but in OpenAPI
-```
-
-## Custom Parameters Documentation
+## Custom Parameters
 
 ```php
 use ApiPlatform\Metadata\HeaderParameter;
-use ApiPlatform\OpenApi\Model\Parameter;
 
 #[Post(
     parameters: [
-        'X-Custom-Header' => new HeaderParameter(
-            description: 'Custom header for authentication',
+        'X-Idempotency-Key' => new HeaderParameter(
+            description: 'Unique key to prevent duplicate processing',
             required: true,
         ),
     ],
 )]
 ```
 
-## Complete Example
+## OpenApiFactory Decorator (Global Customization)
+
+Decorate the built-in factory for global changes like custom server URLs:
 
 ```php
 <?php
-namespace App\Api\Resource;
+namespace App\OpenApi;
 
-use ApiPlatform\Metadata\ApiProperty;
-use ApiPlatform\Metadata\ApiResource;
-use ApiPlatform\Metadata\Get;
-use ApiPlatform\Metadata\Post;
-use ApiPlatform\OpenApi\Model\Operation;
-use ApiPlatform\OpenApi\Model\Response as OpenApiResponse;
+use ApiPlatform\OpenApi\Factory\OpenApiFactoryInterface;
+use ApiPlatform\OpenApi\Model;
+use ApiPlatform\OpenApi\OpenApi;
 
-#[ApiResource(
-    shortName: 'Book',
-    description: 'A book available in the catalog',
-    operations: [
-        new Get(
-            openapi: new Operation(
-                summary: 'Retrieve a book',
-                description: 'Returns the details of a book including availability.',
-            )
-        ),
-        new Post(
-            openapi: new Operation(
-                summary: 'Create a new book',
-                description: 'Adds a new book to the catalog.',
-                responses: [
-                    '201' => new OpenApiResponse(description: 'Book created successfully'),
-                    '422' => new OpenApiResponse(description: 'Validation failed'),
-                ]
-            )
-        ),
-    ]
-)]
-class Book
+final class OpenApiFactory implements OpenApiFactoryInterface
 {
-    #[ApiProperty(description: 'The unique identifier', example: 1)]
-    public int $id;
+    public function __construct(
+        private readonly OpenApiFactoryInterface $decorated,
+        private readonly string $openapiUrl,
+    ) {}
 
-    #[ApiProperty(description: 'The book title', example: 'Domain-Driven Design')]
-    public string $title;
+    public function __invoke(array $context = []): OpenApi
+    {
+        $openApi = $this->decorated->__invoke($context);
 
-    #[ApiProperty(description: 'The ISBN number', example: '978-0321125217')]
-    public string $isbn;
-
-    #[ApiProperty(
-        description: 'Availability status',
-        example: 'in_stock',
-        openapiContext: ['enum' => ['in_stock', 'out_of_stock', 'preorder']]
-    )]
-    public string $availability;
+        return $openApi->withServers([
+            new Model\Server($this->openapiUrl),
+        ]);
+    }
 }
 ```
 
-## Reference
+Register as a decorator in `services.yaml`:
 
-For detailed patterns, see:
-- [Documentation Guide](../../../skills/documentation/AGENTS.md)
+```yaml
+App\OpenApi\OpenApiFactory:
+    decorates: 'api_platform.openapi.factory'
+    arguments:
+        $openapiUrl: '%env(OPENAPI_URL)%'
+```

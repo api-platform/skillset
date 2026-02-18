@@ -1,93 +1,93 @@
 ---
 name: api-filter
-description: Add filters to API Platform collections. Use when implementing search, sorting, date ranges, boolean filters, or custom query parameters on GetCollection operations.
+description: Adds filters to API Platform collections. Use when implementing search, sorting, date ranges, boolean filters, or custom query parameters on GetCollection operations. Covers both the parameters approach and the ApiFilter attribute.
 ---
 
 # Adding Filters to Collections
 
-API Platform provides filtering via the `parameters` attribute on `GetCollection` operations.
+## Approach 1: `parameters` on Operations (Recommended)
 
-## Basic Filter Setup
+Inline filter configuration directly on the operation:
 
 ```php
-<?php
-namespace App\Api\Resource;
-
-use ApiPlatform\Metadata\ApiResource;
 use ApiPlatform\Metadata\GetCollection;
 use ApiPlatform\Metadata\QueryParameter;
 use ApiPlatform\Doctrine\Orm\Filter\ExactFilter;
 
-#[ApiResource]
 #[GetCollection(
     parameters: [
-        'name' => new QueryParameter(filter: new ExactFilter()),
+        'status' => new QueryParameter(filter: new ExactFilter()),
     ],
 )]
-class YourResource
-{
-    public string $name;
-}
+class Order {}
 ```
 
-Client request: `GET /your_resources?name=value`
+Client: `GET /orders?status=shipped`
 
-## Common Filter Types
+## Approach 2: `#[ApiFilter]` on Entity/Document
+
+Declare filters at class level — applies to all GetCollection operations:
+
+```php
+use ApiPlatform\Doctrine\Odm\Filter\SearchFilter;
+use ApiPlatform\Doctrine\Odm\Filter\BooleanFilter;
+use ApiPlatform\Metadata\ApiFilter;
+
+#[ApiFilter(SearchFilter::class, properties: ['address' => 'partial'])]
+#[ApiFilter(BooleanFilter::class, properties: ['isActive'])]
+class Account {}
+```
+
+Client: `GET /accounts?address=alice&isActive=true`
+
+Both approaches are valid. Use `parameters` for per-operation control, `#[ApiFilter]` for class-wide defaults.
+
+## Common Filter Types (parameters approach)
 
 ### Exact Match
 ```php
-'fieldName' => new QueryParameter(filter: new ExactFilter())
+'status' => new QueryParameter(filter: new ExactFilter())
 ```
 
 ### Partial Search (LIKE)
 ```php
 use ApiPlatform\Doctrine\Orm\Filter\PartialSearchFilter;
 
-'search' => new QueryParameter(
-    filter: new PartialSearchFilter(),
-    property: 'name', // Maps 'search' param to 'name' property
-)
+'q' => new QueryParameter(filter: new PartialSearchFilter(), property: 'title')
 ```
 
-### Boolean Filter
+### Boolean
 ```php
 use ApiPlatform\Doctrine\Orm\Filter\BooleanFilter;
 
 'active' => new QueryParameter(filter: new BooleanFilter())
 ```
-Client: `GET /resources?active=true`
 
-### Date Filter
+### Date Range
 ```php
 use ApiPlatform\Doctrine\Orm\Filter\DateFilter;
 
 'createdAt' => new QueryParameter(filter: new DateFilter())
 ```
-Client: `GET /resources?createdAt[after]=2024-01-01&createdAt[before]=2024-12-31`
+Client: `GET /orders?createdAt[after]=2024-01-01&createdAt[before]=2024-12-31`
 
-### IRI Filter (Relations)
+### Relation (IRI)
 ```php
 use ApiPlatform\Doctrine\Orm\Filter\IriFilter;
 
 'author' => new QueryParameter(filter: new IriFilter())
 ```
-Client: `GET /resources?author=/authors/1`
+Client: `GET /books?author=/authors/1`
 
-### Order Filter (Sorting)
+### Sorting
 ```php
 use ApiPlatform\Doctrine\Orm\Filter\OrderFilter;
 
-'order' => new QueryParameter(
-    filter: new OrderFilter(),
-    properties: ['name', 'createdAt']
-)
+'order' => new QueryParameter(filter: new OrderFilter(), properties: ['name', 'createdAt'])
 ```
-Client: `GET /resources?order[name]=asc&order[createdAt]=desc`
+Client: `GET /books?order[createdAt]=desc`
 
-## Combined Filters (OR Search)
-
-Search across multiple fields:
-
+### Combined OR Search
 ```php
 use ApiPlatform\Doctrine\Orm\Filter\FreeTextQueryFilter;
 use ApiPlatform\Doctrine\Orm\Filter\OrFilter;
@@ -98,44 +98,21 @@ use ApiPlatform\Doctrine\Orm\Filter\ExactFilter;
     properties: ['name', 'email', 'description']
 )
 ```
-Client: `GET /resources?autocomplete=searchterm`
 
-## Complete Example
+## ORM vs MongoDB ODM Filter Namespaces
 
-```php
-#[GetCollection(
-    parameters: [
-        // Exact match
-        'status' => new QueryParameter(filter: new ExactFilter()),
+Filters exist in separate namespaces depending on your persistence layer:
 
-        // Partial search
-        'q' => new QueryParameter(
-            filter: new PartialSearchFilter(),
-            property: 'title',
-        ),
+| Filter | ORM | MongoDB ODM |
+|---|---|---|
+| Search | `ApiPlatform\Doctrine\Orm\Filter\SearchFilter` | `ApiPlatform\Doctrine\Odm\Filter\SearchFilter` |
+| Boolean | `ApiPlatform\Doctrine\Orm\Filter\BooleanFilter` | `ApiPlatform\Doctrine\Odm\Filter\BooleanFilter` |
+| Date | `ApiPlatform\Doctrine\Orm\Filter\DateFilter` | `ApiPlatform\Doctrine\Odm\Filter\DateFilter` |
+| Order | `ApiPlatform\Doctrine\Orm\Filter\OrderFilter` | `ApiPlatform\Doctrine\Odm\Filter\OrderFilter` |
 
-        // Date range
-        'publishedAt' => new QueryParameter(filter: new DateFilter()),
-
-        // Boolean
-        'available' => new QueryParameter(filter: new BooleanFilter()),
-
-        // Relation
-        'author' => new QueryParameter(filter: new IriFilter()),
-
-        // Sorting
-        'order' => new QueryParameter(
-            filter: new OrderFilter(),
-            properties: ['publishedAt', 'title']
-        ),
-    ],
-)]
-class Book {}
-```
+Use the namespace matching your persistence layer.
 
 ## Validating Filter Parameters
-
-Add constraints to filter parameters:
 
 ```php
 use Symfony\Component\Validator\Constraints as Assert;
@@ -146,7 +123,10 @@ use Symfony\Component\Validator\Constraints as Assert;
 )
 ```
 
-## Reference
+## Default Ordering
 
-For detailed patterns, see:
-- [Filtering Guide](../../../skills/filtering/AGENTS.md)
+Set default sort order on GetCollection:
+
+```php
+new GetCollection(order: ['createdAt' => 'DESC'])
+```

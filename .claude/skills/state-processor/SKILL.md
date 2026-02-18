@@ -1,11 +1,11 @@
 ---
 name: state-processor
-description: Create state processors for writing data in API Platform. Use when implementing custom persistence, sending emails, triggering side effects, or handling business logic on write operations.
+description: Creates state processors for writing data in API Platform. Use when implementing custom persistence, soft-delete, file downloads, side effects like sending emails, creating related entities, or handling business logic on write operations.
 ---
 
 # Creating State Processors
 
-State Processors handle data persistence and side effects for write operations (Post, Patch, Put, Delete).
+State Processors handle persistence and side effects for write operations (Post, Patch, Put, Delete).
 
 ## Basic Structure
 
@@ -17,42 +17,26 @@ use ApiPlatform\Metadata\Operation;
 use ApiPlatform\State\ProcessorInterface;
 
 /**
- * @implements ProcessorInterface<YourResource, YourResource|void>
+ * @implements ProcessorInterface<YourResource, YourResource>
  */
-final class YourResourceProcessor implements ProcessorInterface
+final class YourProcessor implements ProcessorInterface
 {
-    public function __construct(
-        private YourRepository $repository,
-    ) {}
-
-    public function process(
-        mixed $data,
-        Operation $operation,
-        array $uriVariables = [],
-        array $context = []
-    ): mixed {
-        // Your persistence/business logic
-        $this->repository->save($data);
-
+    public function process(mixed $data, Operation $operation, array $uriVariables = [], array $context = []): mixed
+    {
+        // Business logic + persistence
         return $data;
     }
 }
 ```
 
-## Decorating Built-in Doctrine Processor
+## Decorating Built-in Processors
 
-Wrap the default processor to add side effects:
+Wrap the default processor to add side effects before/after persistence:
 
 ```php
-<?php
-namespace App\State;
-
-use ApiPlatform\Metadata\Operation;
-use ApiPlatform\State\ProcessorInterface;
 use Symfony\Component\DependencyInjection\Attribute\Autowire;
-use Symfony\Component\Mailer\MailerInterface;
 
-final class NotificationProcessor implements ProcessorInterface
+final class OrderCreateProcessor implements ProcessorInterface
 {
     public function __construct(
         #[Autowire(service: 'api_platform.doctrine.orm.state.persist_processor')]
@@ -62,71 +46,157 @@ final class NotificationProcessor implements ProcessorInterface
 
     public function process(mixed $data, Operation $operation, array $uriVariables = [], array $context = []): mixed
     {
-        // Pre-persistence logic
+        // Pre-persistence: set relationships, hash passwords, etc.
+        $data->setCreatedBy($this->getUser());
 
         $result = $this->persistProcessor->process($data, $operation, $uriVariables, $context);
 
-        // Post-persistence side effects
-        $this->mailer->send(new ResourceCreatedEmail($result));
+        // Post-persistence: send notifications, trigger events
+        $this->mailer->send(new OrderConfirmation($result));
 
         return $result;
     }
 }
 ```
 
-## Processor Parameters
+### Doctrine service names
 
-- **$data**: The object to process (after deserialization/validation)
-- **$operation**: Metadata about the operation (Post, Patch, Delete, etc.)
-- **$uriVariables**: URI path variables
-- **$context**: Additional context including `previous_data`
+| Persistence | Persist Processor | Remove Processor |
+|---|---|---|
+| **ORM** | `api_platform.doctrine.orm.state.persist_processor` | `api_platform.doctrine.orm.state.remove_processor` |
+| **MongoDB ODM** | `api_platform.doctrine_mongodb.odm.state.persist_processor` | `api_platform.doctrine_mongodb.odm.state.remove_processor` |
 
-## Common Context Keys
+## Creating Related Entities in a Processor
 
-- `request`: The Symfony HTTP request object
-- `previous_data`: The data before modifications (useful for Patch/Put)
-- `resource_class`: The resource class being operated on
-
-## Built-in Doctrine Services
-
-- `api_platform.doctrine.orm.state.persist_processor` - Persistence
-- `api_platform.doctrine.orm.state.remove_processor` - Deletion
-
-## Assigning to Resource
+Create child resources alongside the main resource:
 
 ```php
-#[ApiResource]
-#[Post(processor: YourResourceProcessor::class)]
-#[Patch(processor: YourResourceProcessor::class)]
-#[Delete(processor: YourResourceProcessor::class)]
-class YourResource {}
+final class AccountCreateProcessor implements ProcessorInterface
+{
+    public function __construct(
+        #[Autowire(service: 'api_platform.doctrine_mongodb.odm.state.persist_processor')]
+        private ProcessorInterface $persistProcessor,
+    ) {}
+
+    public function process(mixed $data, Operation $operation, array $uriVariables = [], array $context = []): mixed
+    {
+        $this->hashPassword($data);
+
+        // Create related entities before persisting
+        foreach (['INBOX', 'Sent', 'Trash', 'Drafts'] as $name) {
+            $mailbox = new Mailbox();
+            $mailbox->path = $name;
+            $data->addMailbox($mailbox); // cascade: ['persist']
+        }
+
+        // Single persist call saves parent + children
+        return $this->persistProcessor->process($data, $operation, $uriVariables, $context);
+    }
+}
 ```
 
-## Best Practices
+## Soft-Delete Processor
 
-1. **Always return data** from processors (breaks serialization otherwise)
-2. Decorate built-in processors rather than replacing them
-3. Keep processors focused on single responsibilities
-4. Use event dispatcher for complex side effects
-5. Handle errors with appropriate HTTP exceptions
-
-## Error Handling
+Reusable processor for soft-deleting resources:
 
 ```php
-use Symfony\Component\HttpKernel\Exception\BadRequestHttpException;
+/**
+ * @implements ProcessorInterface<Account|Domain, Account|Domain>
+ */
+readonly class SoftDeleteProcessor implements ProcessorInterface
+{
+    public function __construct(private DocumentManager $dm) {}
+
+    public function process(mixed $data, Operation $operation, array $uriVariables = [], array $context = []): mixed
+    {
+        $data->isDeleted = true;
+        $this->dm->persist($data);
+        $this->dm->flush();
+
+        return $data;
+    }
+}
+```
+
+Assign to Delete operations:
+
+```php
+new Delete(processor: SoftDeleteProcessor::class)
+```
+
+Combine with a collection extension that filters `isDeleted = false` to hide soft-deleted records from queries (see **securing-collections** skill).
+
+## Returning HTTP Responses (File Downloads)
+
+Processors can return a Symfony `Response` for binary content:
+
+```php
+use Symfony\Component\HttpFoundation\HeaderUtils;
+use Symfony\Component\HttpFoundation\Response;
+
+/**
+ * @implements ProcessorInterface<Message, Response>
+ */
+final class DownloadProcessor implements ProcessorInterface
+{
+    public function process(mixed $data, Operation $operation, array $uriVariables = [], array $context = []): Response
+    {
+        $content = $this->buildContent($data);
+        $response = new Response($content);
+        $response->headers->set('Content-Type', 'application/octet-stream');
+        $response->headers->set('Content-Disposition',
+            HeaderUtils::makeDisposition(HeaderUtils::DISPOSITION_ATTACHMENT, $data->getId() . '.bin')
+        );
+
+        return $response;
+    }
+}
+```
+
+Use with a Get operation that has `write: true`:
+
+```php
+new Get(
+    uriTemplate: '/orders/{id}/download',
+    write: true,
+    processor: DownloadProcessor::class,
+    name: '_api_order_download',
+)
+```
+
+## Handling Both Persist and Delete
+
+When a single processor handles Create/Update AND Delete, inject both services:
+
+```php
+public function __construct(
+    #[Autowire(service: 'api_platform.doctrine.orm.state.persist_processor')]
+    private ProcessorInterface $persistProcessor,
+    #[Autowire(service: 'api_platform.doctrine.orm.state.remove_processor')]
+    private ProcessorInterface $removeProcessor,
+) {}
 
 public function process(mixed $data, Operation $operation, array $uriVariables = [], array $context = []): mixed
 {
-    if (!$this->isValid($data)) {
-        throw new BadRequestHttpException('Invalid data');
+    if ($operation instanceof DeleteOperationInterface) {
+        return $this->removeProcessor->process($data, $operation, $uriVariables, $context);
     }
 
     return $this->persistProcessor->process($data, $operation, $uriVariables, $context);
 }
 ```
 
-## Reference
+## Processor Parameters
 
-For detailed patterns, see:
-- [State Management Guide](../../../skills/state.md)
-- [State Providers/Processors Guide](../../../skills/state/AGENTS.md)
+- **$data**: The deserialized/validated object
+- **$operation**: Operation metadata (Post, Patch, Delete, etc.)
+- **$uriVariables**: URI path variables
+- **$context**: Includes `previous_data` (before modification), `request`, `resource_class`
+
+## Best Practices
+
+1. **Always return data** from processors — omitting breaks serialization
+2. Decorate built-in processors rather than replacing them
+3. Keep processors focused: one processor per operation when logic differs significantly
+4. Use `$context['previous_data']` in Patch/Put to detect what changed
+5. Throw `HttpException` subclasses for domain errors (`BadRequestHttpException`, `UnprocessableEntityHttpException`)

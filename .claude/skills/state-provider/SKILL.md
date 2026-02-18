@@ -1,6 +1,6 @@
 ---
 name: state-provider
-description: Create state providers for reading data in API Platform. Use when implementing custom data retrieval, fetching from external APIs, aggregating data sources, or optimizing queries.
+description: Creates state providers for reading data in API Platform. Use when implementing custom data retrieval, enriching collections with computed fields, transforming entities to different DTOs, or decorating built-in Doctrine providers.
 ---
 
 # Creating State Providers
@@ -22,10 +22,6 @@ use ApiPlatform\State\ProviderInterface;
  */
 final class YourResourceProvider implements ProviderInterface
 {
-    public function __construct(
-        private YourRepository $repository,
-    ) {}
-
     public function provide(
         Operation $operation,
         array $uriVariables = [],
@@ -40,9 +36,9 @@ final class YourResourceProvider implements ProviderInterface
 }
 ```
 
-## Decorating Built-in Doctrine Provider
+## Decorating Built-in Providers
 
-Wrap the default provider to add custom logic:
+Wrap the default provider to add custom logic (computed fields, enrichment):
 
 ```php
 <?php
@@ -52,20 +48,90 @@ use ApiPlatform\Metadata\Operation;
 use ApiPlatform\State\ProviderInterface;
 use Symfony\Component\DependencyInjection\Attribute\Autowire;
 
-final class CustomProvider implements ProviderInterface
+final class EnrichedItemProvider implements ProviderInterface
 {
     public function __construct(
         #[Autowire(service: 'api_platform.doctrine.orm.state.item_provider')]
         private ProviderInterface $itemProvider,
     ) {}
 
-    public function provide(Operation $operation, array $uriVariables = [], array $context = []): object|array|null
+    public function provide(Operation $operation, array $uriVariables = [], array $context = []): ?object
     {
         $data = $this->itemProvider->provide($operation, $uriVariables, $context);
 
-        // Add custom logic (computed fields, transformations, etc.)
+        if (null === $data) {
+            return null; // API Platform returns 404 automatically
+        }
+
+        // Enrich with computed fields
+        $data->computedScore = $this->computeScore($data);
 
         return $data;
+    }
+}
+```
+
+### Doctrine service names
+
+| Persistence | Item Provider | Collection Provider |
+|---|---|---|
+| **ORM** | `api_platform.doctrine.orm.state.item_provider` | `api_platform.doctrine.orm.state.collection_provider` |
+| **MongoDB ODM** | `api_platform.doctrine_mongodb.odm.state.item_provider` | `api_platform.doctrine_mongodb.odm.state.collection_provider` |
+
+## Enriching Paginated Collections
+
+Iterate over paginated results to add computed fields:
+
+```php
+use ApiPlatform\State\Pagination\PaginatorInterface;
+
+final class MailboxListProvider implements ProviderInterface
+{
+    public function __construct(
+        #[Autowire(service: 'api_platform.doctrine_mongodb.odm.state.collection_provider')]
+        private ProviderInterface $collectionProvider,
+        private MailboxHelper $helper,
+    ) {}
+
+    public function provide(Operation $operation, array $uriVariables = [], array $context = []): PaginatorInterface
+    {
+        $mailboxes = $this->collectionProvider->provide($operation, $uriVariables, $context);
+
+        foreach ($mailboxes as $item) {
+            $item->totalMessages = $this->helper->countMessages($item->getId());
+        }
+
+        return $mailboxes;
+    }
+}
+```
+
+## Cross-Resource Providers (Returning a Different Type)
+
+A provider can fetch one resource type and return another:
+
+```php
+final class RawMessageProvider implements ProviderInterface
+{
+    public function __construct(
+        #[Autowire(service: 'api_platform.doctrine_mongodb.odm.state.item_provider')]
+        private ProviderInterface $itemProvider,
+        private RawMessageBuilderInterface $builder,
+    ) {}
+
+    public function provide(Operation $operation, array $uriVariables = [], array $context = []): ?RawMessage
+    {
+        // Fetch the Document\Message using Doctrine
+        $message = $this->itemProvider->provide($operation, $uriVariables, $context);
+        if (!$message) {
+            return null;
+        }
+
+        // Transform to a completely different API resource
+        $raw = new RawMessage();
+        $raw->id = $message->getId();
+        $raw->content = $this->builder->build($message);
+        return $raw;
     }
 }
 ```
@@ -73,34 +139,23 @@ final class CustomProvider implements ProviderInterface
 ## Provider Parameters
 
 - **$operation**: Metadata about the operation (Get, GetCollection, etc.)
-- **$uriVariables**: URI path variables (e.g., `['id' => 123]`)
-- **$context**: Additional context including request, filters, serialization context
-
-## Common Context Keys
-
-- `request`: The Symfony HTTP request object
-- `resource_class`: The resource class being operated on
-- `filters`: Applied query filters
+- **$uriVariables**: URI path variables (e.g., `['id' => '123', 'accountId' => '456']`)
+- **$context**: Additional context:
+  - `request`: The Symfony HttpFoundation Request
+  - `resource_class`: The API resource class
+  - `filters`: Applied query parameter filters
 
 ## Assigning to Resource
 
 ```php
-#[ApiResource]
-#[Get(provider: YourResourceProvider::class)]
-#[GetCollection(provider: YourResourceProvider::class)]
+#[Get(provider: YourProvider::class)]
+#[GetCollection(provider: YourCollectionProvider::class)]
 class YourResource {}
 ```
 
 ## Best Practices
 
-1. Return `null` for missing items (API Platform handles 404)
+1. Return `null` for missing items — API Platform handles the 404
 2. Use `CollectionOperationInterface` to distinguish collection vs item
-3. Inject only what you need via constructor
-4. For complex queries, optimize with eager loading
-5. Consider caching for expensive operations
-
-## Reference
-
-For detailed patterns, see:
-- [State Management Guide](../../../skills/state.md)
-- [State Providers/Processors Guide](../../../skills/state/AGENTS.md)
+3. When decorating, always delegate to the built-in provider first
+4. For computed fields on collections, iterate over the paginator (it's lazy)

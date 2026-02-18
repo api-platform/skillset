@@ -1,106 +1,120 @@
 ---
 name: api-test
-description: Write functional tests for API Platform endpoints. Use when creating tests for API resources, testing validation, security, or verifying response formats.
+description: Writes functional tests for API Platform endpoints. Use when creating tests for API resources, testing validation, security, multi-tenant isolation, or verifying response formats. Covers authentication setup and database fixtures.
 ---
 
 # Testing API Platform Endpoints
 
 Use `ApiPlatform\Symfony\Bundle\Test\ApiTestCase` for functional API tests.
 
-## Basic Test Structure
+## Base Test Class
+
+Create a base class that handles database setup and authentication:
 
 ```php
 <?php
-namespace App\Tests\Api;
+namespace App\Tests;
 
-use ApiPlatform\Symfony\Bundle\Test\ApiTestCase;
-use App\Entity\YourEntity;
+use ApiPlatform\Symfony\Bundle\Test\ApiTestCase as SymfonyApiTestCase;
+use ApiPlatform\Symfony\Bundle\Test\Client;
 
-class YourResourceTest extends ApiTestCase
+class ApiTestCase extends SymfonyApiTestCase
 {
-    public function testGetCollection(): void
+    protected function setUp(): void
     {
-        $response = static::createClient()->request('GET', '/your_resources');
-
-        $this->assertResponseIsSuccessful();
-        $this->assertResponseHeaderSame('content-type', 'application/ld+json; charset=utf-8');
+        parent::setUp();
+        // Reset database state for each test
+        $manager = static::getContainer()->get('doctrine')->getManager();
+        // For MongoDB: drop and recreate
+        // For ORM: use fixtures or transactions
     }
 
-    public function testGetItem(): void
+    /**
+     * Creates an authenticated client with test fixtures.
+     */
+    public function createLoggedInClient(): Client
     {
-        // Load fixtures first
-        $this->loadFixtures();
+        $manager = static::getContainer()->get('doctrine')->getManager();
 
-        $response = static::createClient()->request('GET', '/your_resources/1');
+        // Create user, token, and required fixtures
+        $user = new User();
+        // ... set up user
+        $manager->persist($user);
+        $manager->flush();
 
-        $this->assertResponseIsSuccessful();
-        $this->assertJsonContains([
-            '@type' => 'YourResource',
-            'id' => 1,
+        // Return client with auth headers
+        return static::createClient([], [
+            'headers' => ['x-api-key' => 'test_token'],
         ]);
     }
 }
 ```
 
-## Making Requests
+## Basic CRUD Tests
 
 ```php
-// GET collection
-static::createClient()->request('GET', '/resources');
+class OrderTest extends ApiTestCase
+{
+    public function testGetCollection(): void
+    {
+        $client = $this->createLoggedInClient();
+        $client->request('GET', '/orders');
 
-// GET item
-static::createClient()->request('GET', '/resources/1');
+        $this->assertResponseIsSuccessful();
+        $this->assertResponseHeaderSame('content-type', 'application/ld+json; charset=utf-8');
+    }
 
-// POST (create)
-static::createClient()->request('POST', '/resources', [
-    'json' => [
-        'name' => 'New Resource',
-        'email' => 'test@example.com',
-    ],
-]);
+    public function testCreate(): void
+    {
+        $client = $this->createLoggedInClient();
+        $client->request('POST', '/orders', [
+            'headers' => ['Content-Type' => 'application/ld+json'],
+            'json' => ['name' => 'Test Order', 'total' => 99.99],
+        ]);
 
-// PATCH (update)
-static::createClient()->request('PATCH', '/resources/1', [
-    'headers' => ['Content-Type' => 'application/merge-patch+json'],
-    'json' => [
-        'name' => 'Updated Name',
-    ],
-]);
+        $this->assertResponseStatusCodeSame(201);
+        $data = $client->getResponse()->toArray();
+        $this->assertSame('Test Order', $data['name']);
+    }
 
-// DELETE
-static::createClient()->request('DELETE', '/resources/1');
+    public function testUpdate(): void
+    {
+        $client = $this->createLoggedInClient();
+
+        // Create then update
+        $client->request('POST', '/orders', [
+            'headers' => ['Content-Type' => 'application/ld+json'],
+            'json' => ['name' => 'Original'],
+        ]);
+        $order = $client->getResponse()->toArray();
+
+        $client->request('PATCH', '/orders/' . $order['id'], [
+            'headers' => ['Content-Type' => 'application/merge-patch+json'],
+            'json' => ['name' => 'Updated'],
+        ]);
+
+        $this->assertResponseIsSuccessful();
+        $this->assertSame('Updated', $client->getResponse()->toArray()['name']);
+    }
+
+    public function testDelete(): void
+    {
+        $client = $this->createLoggedInClient();
+        // ... create resource first
+        $client->request('DELETE', '/orders/' . $id);
+        $this->assertResponseStatusCodeSame(204);
+    }
+}
 ```
 
-## Common Assertions
-
-```php
-// Status assertions
-$this->assertResponseIsSuccessful();
-$this->assertResponseStatusCodeSame(201);
-$this->assertResponseStatusCodeSame(404);
-$this->assertResponseStatusCodeSame(422); // Validation error
-
-// Content assertions
-$this->assertJsonContains(['name' => 'Expected Name']);
-$this->assertJsonEquals([/* exact expected response */]);
-
-// Schema validation
-$this->assertMatchesResourceCollectionJsonSchema(YourResource::class);
-$this->assertMatchesResourceItemJsonSchema(YourResource::class);
-
-// Header assertions
-$this->assertResponseHeaderSame('content-type', 'application/ld+json; charset=utf-8');
-```
-
-## Testing Validation Errors
+## Testing Validation
 
 ```php
 public function testCreateWithInvalidData(): void
 {
-    static::createClient()->request('POST', '/resources', [
-        'json' => [
-            'email' => 'invalid-email',
-        ],
+    $client = $this->createLoggedInClient();
+    $client->request('POST', '/orders', [
+        'json' => ['email' => 'not-valid'],
     ]);
 
     $this->assertResponseStatusCodeSame(422);
@@ -112,65 +126,87 @@ public function testCreateWithInvalidData(): void
 }
 ```
 
-## Testing Security
+## Testing Authentication
 
 ```php
-public function testUnauthorizedAccess(): void
+public function testRequiresAuthentication(): void
 {
-    static::createClient()->request('POST', '/admin/resources', [
-        'json' => ['name' => 'Test'],
-    ]);
-
-    $this->assertResponseStatusCodeSame(403);
-}
-
-public function testAuthorizedAccess(): void
-{
+    // No auth headers — use raw createClient
     $client = static::createClient();
-    // Authenticate somehow (JWT, session, etc.)
 
-    $client->request('POST', '/admin/resources', [
-        'json' => ['name' => 'Test'],
-    ]);
-
-    $this->assertResponseIsSuccessful();
+    $client->request('GET', '/orders');
+    $this->assertResponseStatusCodeSame(401);
 }
 ```
 
-## Loading Test Fixtures
+## Multi-Tenant Isolation Tests
+
+Test that users can only access their own resources:
 
 ```php
-private function loadFixtures(): void
+public function testIsolationBetweenUsers(): void
 {
-    $manager = static::getContainer()->get('doctrine')->getManager();
+    $client1 = $this->createLoggedInClient();       // User 1, Org 1
+    $client2 = $this->createSecondUserClient();      // User 2, Org 2
 
-    $entity = new YourEntity();
-    $entity->setName('Test Fixture');
-    $manager->persist($entity);
-    $manager->flush();
+    // User 1 creates a resource
+    $client1->request('POST', '/accounts', [
+        'headers' => ['Content-Type' => 'application/ld+json'],
+        'json' => ['address' => 'user1@example.com', 'password' => 'Pass123!'],
+    ]);
+    $account = $client1->getResponse()->toArray();
+
+    // User 2 cannot read it
+    $client2->request('GET', '/accounts/' . $account['id']);
+    $this->assertResponseStatusCodeSame(404);
+
+    // User 2 cannot update it
+    $client2->request('PATCH', '/accounts/' . $account['id'], [
+        'headers' => ['Content-Type' => 'application/merge-patch+json'],
+        'json' => ['isActive' => false],
+    ]);
+    $this->assertResponseStatusCodeSame(404);
+
+    // User 2 cannot delete it
+    $client2->request('DELETE', '/accounts/' . $account['id']);
+    $this->assertResponseStatusCodeSame(404);
+
+    // Collections are isolated
+    $client2->request('GET', '/accounts');
+    $collection = $client2->getResponse()->toArray();
+    $ids = array_column($collection['member'], 'id');
+    $this->assertNotContains($account['id'], $ids);
 }
 ```
 
-## Testing Different Formats
+## Testing Filters
 
 ```php
-// JSON:API format
-$response = static::createClient()->request('GET', '/resources', [
-    'headers' => ['Accept' => 'application/vnd.api+json'],
-]);
+public function testFilterByStatus(): void
+{
+    $client = $this->createLoggedInClient();
+    // ... create test data with different statuses
 
-$this->assertJsonContains([
-    'data' => [
-        ['type' => 'YourResource'],
-    ],
-]);
+    $client->request('GET', '/orders?isActive=true');
+    $this->assertResponseIsSuccessful();
+    $data = $client->getResponse()->toArray();
+
+    foreach ($data['member'] as $order) {
+        $this->assertTrue($order['isActive']);
+    }
+}
+```
+
+## Common Assertions
+
+```php
+$this->assertResponseIsSuccessful();
+$this->assertResponseStatusCodeSame(201);
+$this->assertJsonContains(['name' => 'Expected']);
+$this->assertMatchesResourceItemJsonSchema(Order::class);
+$this->assertMatchesResourceCollectionJsonSchema(Order::class);
 ```
 
 ## Test File Location
 
-Place tests in `tests/Api/` following the naming convention `{ResourceName}Test.php`.
-
-## Reference
-
-For detailed patterns, see:
-- [Testing Guide](../../../skills/testing/AGENTS.md)
+Place tests in `tests/Functional/` following the naming convention `{ResourceName}Test.php`.
