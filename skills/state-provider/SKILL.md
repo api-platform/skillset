@@ -1,6 +1,6 @@
 ---
 name: state-provider
-description: Creates state providers for reading data in API Platform. Use when implementing custom data retrieval, enriching collections with computed fields, transforming entities to different DTOs, or decorating built-in Doctrine providers.
+description: "Creates state providers for read operations in API Platform. Use whenever GET data needs custom retrieval or shaping — computed or enriched fields, transforming entities to different DTOs, decorating built-in Doctrine providers, sortable computed fields via repositoryMethod — or any 'the response should also include X' request, even if the user doesn't say 'provider'."
 ---
 
 # Creating State Providers
@@ -77,6 +77,16 @@ final class EnrichedItemProvider implements ProviderInterface
 |---|---|---|
 | **ORM** | `api_platform.doctrine.orm.state.item_provider` | `api_platform.doctrine.orm.state.collection_provider` |
 | **MongoDB ODM** | `api_platform.doctrine_mongodb.odm.state.item_provider` | `api_platform.doctrine_mongodb.odm.state.collection_provider` |
+
+> **Laravel (Eloquent):** `ProviderInterface` is identical and resources reference a
+> provider by class-string (`provider: YourProvider::class`). There are no
+> `api_platform.doctrine.*` service ids — the built-in Eloquent providers are bound
+> in the container by their class name
+> (`ApiPlatform\Laravel\Eloquent\State\ItemProvider` /
+> `…\State\CollectionProvider`). To decorate one, type-hint that concrete class in
+> your constructor (the container resolves it). Stable scalar/computed-field sorting
+> uses `stateOptions: new Options(modelClass: …)` on the Eloquent `Options` and an
+> `OrderFilter` parameter rather than `repositoryMethod`.
 
 ## Enriching Paginated Collections
 
@@ -205,7 +215,6 @@ class Cart
     }
 }
 ```
-*Pattern: `tests/Fixtures/TestBundle/Entity/Cart.php` + `Repository/CartRepository.php`, `Doctrine/ComputedFieldTest.php`.*
 
 > Use a **Doctrine collection extension** (see **securing-collections**) instead when
 > the query change must apply to *every* operation/query for the resource (e.g.
@@ -232,7 +241,6 @@ class Order
     public ?Customer $billedTo = null; // serialized with the 'summary' group only
 }
 ```
-*Pattern: `Doctrine/ContextSwitchTest.php`.*
 
 ## Best Practices
 

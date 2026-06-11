@@ -1,0 +1,13 @@
+{
+  "name": "api-platform-skillset",
+  "owner": {
+    "name": "soyuka"
+  },
+  "plugins": [
+    {
+      "name": "api-platform",
+      "description": "API Platform development skills for Symfony and Laravel — resources, filters, state layer, security, validation, pagination, errors, GraphQL, Mercure, OpenAPI docs and tests.",
+      "source": "./"
+    }
+  ]
+}

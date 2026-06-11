@@ -1,6 +1,6 @@
 ---
 name: api-filter
-description: Adds filters to API Platform collections. Use when implementing search, sorting, date ranges, boolean filters, IRI lookups, or custom query parameters on GetCollection operations. Covers the canonical QueryParameter approach.
+description: "Adds filters to API Platform collections using the canonical QueryParameter approach. Use whenever the user wants search, sorting, date ranges, boolean/enum/numeric filtering, IRI lookups, free-text search, or any 'let users filter/search/sort the list by X' request on a collection — even if they never say 'filter'. Also use when migrating legacy #[ApiFilter]/SearchFilter code."
 ---
 
 # Adding Filters to Collections
@@ -50,6 +50,9 @@ matching your persistence layer:
 | `OrFilter` | decorator: switches a primary's `WHERE` to `orWhere` | `…\Orm\Filter\OrFilter` | `…\Odm\Filter\OrFilter` |
 | `FreeTextQueryFilter` | decorator: broadcasts one value across N properties | `…\Orm\Filter\FreeTextQueryFilter` | `…\Odm\Filter\FreeTextQueryFilter` |
 
+> `ComparisonFilter` and `OrFilter` are still marked `@experimental` in 4.4 — they
+> are the intended migration target but their API may shift before stabilizing.
+
 ## Common filters
 
 ### Exact match
@@ -75,7 +78,6 @@ use Symfony\Component\TypeInfo\TypeIdentifier;
 ```
 `GET /orders?active=true`. Use `TypeIdentifier::INT` for integers; pass an enum's
 native type for backed enums.
-*Pattern: `tests/Fixtures/TestBundle/Entity/FilteredBooleanParameter.php` (nativeType form).*
 
 ### Partial search (LIKE)
 
@@ -85,7 +87,6 @@ use ApiPlatform\Doctrine\Orm\Filter\PartialSearchFilter;
 'q' => new QueryParameter(filter: new PartialSearchFilter(), property: 'title')
 ```
 `GET /books?q=harry`. `property:` maps the public param name to the entity field.
-*Pattern: `tests/Functional/Parameters/PartialSearchFilterTest.php`.*
 
 ### Comparison (`gt`/`gte`/`lt`/`lte`/`ne`)
 
@@ -104,7 +105,6 @@ use ApiPlatform\Doctrine\Orm\Filter\DateFilter;
 'createdAt' => new QueryParameter(filter: new DateFilter())
 ```
 `GET /orders?createdAt[after]=2024-01-01&createdAt[before]=2024-12-31`.
-*Pattern: `tests/Functional/Parameters/DateFilterTest.php`.*
 
 ### Numeric range
 
@@ -132,7 +132,6 @@ use ApiPlatform\Doctrine\Orm\Filter\IriFilter;
 'author' => new QueryParameter(filter: new IriFilter())
 ```
 `GET /books?author=/authors/1`.
-*Pattern: `tests/Functional/Parameters/IriFilterTest.php`.*
 
 ### Sorting — `SortFilter`
 
@@ -149,7 +148,18 @@ use ApiPlatform\Doctrine\Orm\Filter\SortFilter;
 'order[:property]' => new QueryParameter(filter: new SortFilter()),
 // → GET /books?order[name]=asc&order[createdAt]=desc
 ```
-*Pattern: `tests/Functional/Parameters/SortFilterTest.php`, `tests/Fixtures/.../CursorPaginatedDummy.php`.*
+
+`property:` can traverse relations (`'department.company.name'` sorts across joins).
+Control null placement with `nullsComparison`:
+
+```php
+use ApiPlatform\Doctrine\Common\Filter\OrderFilterInterface;
+
+'orderHireDate' => new QueryParameter(
+    filter: new SortFilter(nullsComparison: OrderFilterInterface::NULLS_ALWAYS_FIRST),
+    property: 'hireDate',
+),
+```
 
 ### Free-text across multiple fields
 
@@ -167,7 +177,6 @@ use ApiPlatform\Doctrine\Orm\Filter\ExactFilter;
 ),
 ```
 `GET /users?autocomplete=alice`.
-*Pattern: `tests/Functional/Parameters/OrFilterTest.php`.*
 
 ## Validating filter parameters
 
@@ -180,7 +189,6 @@ use Symfony\Component\Validator\Constraints as Assert;
 )
 ```
 Invalid values yield a 422 before the query runs.
-*Pattern: `tests/Functional/Parameters/ValidationTest.php`.*
 
 ## Default ordering
 
@@ -201,3 +209,43 @@ new GetCollection(order: ['createdAt' => 'DESC'])
 | `BackedEnumFilter` | `ExactFilter` + enum `nativeType` |
 | `OrderFilter` | `SortFilter` |
 | `RangeFilter`, `DateFilter`, `ExistsFilter` | same class — survives as drop-in, just move to `QueryParameter` |
+
+## Laravel (Eloquent)
+
+The `QueryParameter` wiring is identical, but Laravel ships its **own** Eloquent
+filter set under `ApiPlatform\Laravel\Eloquent\Filter\` — these are not the Doctrine
+classes and the names differ. Declare them with class-level `#[QueryParameter]` /
+`#[GetCollection(parameters: …)]` on the model (or DTO). The `key`, `property`,
+`properties`, `:property` placeholder and `constraints` options work the same.
+
+| Need | Doctrine (above) | Laravel Eloquent class |
+|---|---|---|
+| equality | `ExactFilter` | `EqualsFilter` |
+| `LIKE %x%` | `PartialSearchFilter` | `PartialSearchFilter` |
+| `LIKE x%` / `%x` | `StartSearchFilter` / `EndSearchFilter` | `StartSearchFilter` / `EndSearchFilter` |
+| boolean | `ExactFilter` + `nativeType` | `BooleanFilter` |
+| date range | `DateFilter` | `DateFilter` (`filterContext: ['include_nulls' => true]` to keep nulls; default excludes) |
+| numeric range | `RangeFilter` | `RangeFilter` |
+| sort | `SortFilter` | `OrderFilter` |
+| OR | `OrFilter` | `OrFilter` (decorator: `new OrFilter(new EqualsFilter())`) |
+
+```php
+use ApiPlatform\Laravel\Eloquent\Filter\EqualsFilter;
+use ApiPlatform\Laravel\Eloquent\Filter\OrderFilter;
+use ApiPlatform\Metadata\ApiResource;
+use ApiPlatform\Metadata\QueryParameter;
+
+#[ApiResource]
+#[QueryParameter(key: 'name', filter: EqualsFilter::class)]
+#[QueryParameter(key: 'sort[:property]', filter: OrderFilter::class, properties: ['name', 'id'])]
+class Book extends Model {}
+```
+
+Constraints are **Laravel validation rules** (a string/array), not Symfony
+constraints: `new QueryParameter(key: 'name', filter: PartialSearchFilter::class, constraints: 'min:2')`.
+Custom filters implement `ApiPlatform\Laravel\Eloquent\Filter\FilterInterface`
+(`apply(Builder $builder, mixed $values, Parameter $parameter, array $context = []): Builder`);
+scaffold with `php artisan make:filter`. There is no `ExistsFilter`, `ComparisonFilter`,
+`IriFilter` or `FreeTextQueryFilter` in the Eloquent set — `nativeType` on a parameter
+is also unused (use `BooleanFilter` for booleans). `#[ApiFilter]` is not the Laravel
+idiom; models declare `#[QueryParameter]` directly.

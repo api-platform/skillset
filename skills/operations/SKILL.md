@@ -1,6 +1,6 @@
 ---
 name: operations
-description: Configures API Platform operations — security expressions, validation groups, denormalization error collection, query-parameter validation, deprecation headers, and nested PATCH. Use when restricting access to endpoints, controlling validation per operation, deprecating endpoints, or debugging merge-patch on nested resources.
+description: "Configures API Platform operations — security expressions, validation groups, denormalization error collection, parameter validation and parameter-level security, deprecation headers, and nested PATCH. Use whenever the user wants to restrict who can call an endpoint, vary validation between create and update, validate query/header parameters, deprecate an endpoint, or debug merge-patch on nested resources — including plain 'protect this endpoint' or 'only admins can X' requests."
 ---
 
 # Operations: Security, Validation & Lifecycle
@@ -42,16 +42,29 @@ decision depends on incoming values (e.g. preventing privilege escalation on PAT
 
 ### Parameter-based
 
-Expose a request parameter to the expression with `securityHeader` (header) or by
-declaring it in `parameters`:
+Each parameter carries its own `security` expression, where the parameter name
+becomes a variable bound to the submitted value. Declare them in `parameters` as
+`QueryParameter` or `HeaderParameter`:
 
 ```php
+use ApiPlatform\Metadata\GetCollection;
+use ApiPlatform\Metadata\HeaderParameter;
+use ApiPlatform\Metadata\QueryParameter;
+use Symfony\Component\TypeInfo\Type\BuiltinType;
+use Symfony\Component\TypeInfo\TypeIdentifier;
+
 #[GetCollection(
-    securityHeader: 'auth',
-    security: "auth == 'secured'",
+    parameters: [
+        'name' => new QueryParameter(security: 'is_granted("ROLE_ADMIN")'),
+        'auth' => new HeaderParameter(security: '"secured" == auth', nativeType: new BuiltinType(TypeIdentifier::STRING)),
+        'secret' => new QueryParameter(security: '"secured" == secret', nativeType: new BuiltinType(TypeIdentifier::STRING)),
+    ],
 )]
 ```
-Requires an `auth: secured` request header.
+
+`?name=foo` evaluates `is_granted("ROLE_ADMIN")` (403 otherwise); the `auth` header
+or `?secret=…` must equal `secured` or the request is rejected. The parameter is
+only checked when present — an absent or value-less parameter passes.
 
 > For query-level data isolation (multi-tenant, soft-delete) that must apply to
 > **every** query regardless of operation, use a Doctrine extension or link handler
@@ -89,7 +102,9 @@ By default a type mismatch in the body throws on the first bad field. Enable
 ```php
 #[Post(validationContext: ['collect_denormalization_errors' => true])]
 ```
-*Pattern: `tests/Functional/.../ValidationTest.php::testPostWithDenormalizationErrorsCollected`.*
+
+Each malformed field becomes a `violations` entry with a `propertyPath`, a
+`This value should be of type …` message, and a `hint` explaining the failure.
 
 ### Validating query parameters
 
@@ -106,7 +121,6 @@ use Symfony\Component\Validator\Constraints as Assert;
     ],
 )]
 ```
-*Pattern: `tests/Functional/Parameters/ValidationTest.php`.*
 
 ## Deprecating endpoints
 
@@ -120,7 +134,10 @@ with the removal date. Apply at resource or operation level.
 )]
 class Invoice {}
 ```
-*Pattern: `tests/Functional/.../DeprecationHeaderTest.php`.*
+
+`deprecationReason` emits a `Deprecation` header and `sunset` a `Sunset` header. To
+also advertise a migration doc, add an explicit operation `links:` entry —
+`new Link('deprecation', 'https://…')` renders `Link: <…>; rel="deprecation"`.
 
 ## Nested PATCH gotcha
 
@@ -132,7 +149,29 @@ object as new (and attempt to create it):
 { "shippingAddress": { "id": 12, "city": "Lyon" } }
 ```
 Without `"id"`, API Platform tries to create a new `Address` rather than patch #12.
-*Pattern: `tests/Functional/.../NestedPatchTest.php`.*
+
+## Laravel
+
+Per-operation metadata (`security`, `validationContext` groups, `collect_denormalization_errors`,
+`deprecationReason`/`sunset`, parameter validation/security) is mostly shared, but
+auth and validation wiring differ:
+
+- **Authorization** integrates with Laravel **policies**, not Symfony voters. Once a
+  policy exists, API Platform auto-maps operations to methods: GET collection →
+  `viewAny`, GET → `view`, POST → `create`, PATCH/PUT → `update` (PUT → `create` if
+  absent), DELETE → `delete`. Override the mapping with a `policy:` property on the
+  operation: `new Patch(policy: 'myCustomPolicy')`. The `security` ExpressionLanguage
+  string also works.
+- **Authentication / middleware** is attached with the Laravel `middleware:` property
+  per operation (`new Patch(middleware: 'auth:sanctum')`) or globally under
+  `defaults.middleware` in `config/api-platform.php`.
+- **Validation** uses Laravel `rules` (array / closure / `FormRequest`) per resource
+  or operation rather than Symfony `validationContext` groups — see the
+  **custom-validator** Laravel section. `AuthenticationException` → 401 and
+  `AuthorizationException` → 403 are mapped by default in the config's
+  `exception_to_status`.
+- Query/header `Parameter` `constraints` are Laravel validation rule strings (e.g.
+  `'min:2'`), not Symfony constraints.
 
 ## Checklist
 

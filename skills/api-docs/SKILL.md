@@ -1,6 +1,6 @@
 ---
 name: api-docs
-description: Customizes OpenAPI documentation for API Platform resources. Use when adding descriptions, examples, custom responses, hiding operations from documentation, or decorating the OpenAPI factory for global customization.
+description: "Customizes OpenAPI documentation for API Platform resources. Use whenever the user mentions OpenAPI/Swagger output, API docs, descriptions or examples on endpoints or properties, custom response documentation, hiding operations or resources from docs, or decorating the OpenAPI factory — even for small requests like 'document this field'."
 ---
 
 # Customizing API Documentation
@@ -26,7 +26,6 @@ api_platform:
                     scheme: bearer
                     bearerFormat: JWT
 ```
-*Pattern: `OpenApiTest.php`.*
 
 ## Operation-Level Customization
 
@@ -144,3 +143,19 @@ App\OpenApi\OpenApiFactory:
     arguments:
         $openapiUrl: '%env(OPENAPI_URL)%'
 ```
+
+## Laravel
+
+All the attribute-level customization — operation `openapi: new Operation(...)`,
+`#[ApiProperty]` description/example/`openapiContext`, `openapi: false`, `hydra: false`,
+`HeaderParameter` — is framework-neutral and works unchanged. Only the global pieces
+differ:
+
+- Global title/version/description are top-level keys in `config/api-platform.php`
+  (`'title'`, `'version'`, `'description'`); there is no `openapi.info` YAML. Security
+  schemes are configured under the `swagger_ui` block (`apiKeys`, `oauth`, `http_auth`)
+  in the same file, and `openapi.tags` is available there too.
+- To decorate the OpenAPI factory, bind your decorator in a service provider with the
+  container's `extend()` (resolving the inner `OpenApiFactoryInterface`) instead of the
+  Symfony `decorates:` YAML — the `OpenApiFactoryInterface` and `withServers(...)` API
+  are identical.

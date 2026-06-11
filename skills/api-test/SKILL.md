@@ -1,6 +1,6 @@
 ---
 name: api-test
-description: Writes functional tests for API Platform endpoints. Use when creating tests for API resources, testing validation, security, multi-tenant isolation, or verifying response formats. Covers authentication setup and database fixtures.
+description: "Writes functional tests for API Platform endpoints with ApiTestCase. Use whenever the user asks to test an API resource, write or fix a functional test, verify validation, security or multi-tenant isolation, set up authentication or database fixtures for tests, or reproduce an endpoint bug with a test — including plain 'add tests for X' requests."
 ---
 
 # Testing API Platform Endpoints
@@ -236,3 +236,43 @@ For MongoDB ODM, drop the collections via
 ## Test File Location
 
 Place tests in `tests/Functional/` following the naming convention `{ResourceName}Test.php`.
+
+## Laravel
+
+Laravel uses its own HTTP test client (PHPUnit `Tests\TestCase` or Pest), **not**
+`ApiTestCase`. API Platform ships `ApiPlatform\Laravel\Test\ApiTestAssertionsTrait`
+(adds `assertJsonContains()`, `assertArraySubset()`, `getIriFromResource()`). Use
+`RefreshDatabase` for isolation and model **factories** for fixtures (not Doctrine
+`SchemaTool`/fixtures).
+
+```php
+<?php
+namespace Tests\Feature;
+
+use ApiPlatform\Laravel\Test\ApiTestAssertionsTrait;
+use App\Models\Book;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Tests\TestCase;
+
+class BooksTest extends TestCase
+{
+    use RefreshDatabase, ApiTestAssertionsTrait;
+
+    public function testCreate(): void
+    {
+        $response = $this->postJson('/api/books', ['isbn' => '0099740915', 'title' => 'X']);
+        $response->assertStatus(201);
+        $this->assertJsonContains(['title' => 'X'], $response->json());
+
+        $book = Book::factory()->create();
+        $this->getJson($this->getIriFromResource($book))->assertStatus(200);
+    }
+}
+```
+
+Key deltas: request helpers are `getJson`/`postJson`/`patchJson`/`deleteJson`;
+assertions are `$response->assertStatus(...)`, `$response->assertHeader(...)`,
+`$this->assertDatabaseMissing(...)`. `assertJsonContains()` takes the decoded body
+(`$response->json()`). Isolation/validation(422)/auth tests use the same status-code
+assertions; auth uses Sanctum/`actingAs()`, not custom headers. Pest is the default
+and wraps the same trait via `uses(RefreshDatabase::class, ApiTestAssertionsTrait::class)`.

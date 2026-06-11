@@ -1,0 +1,11 @@
+{
+  "name": "api-platform",
+  "description": "API Platform development skills — resources & DTOs, filters, state providers/processors, operation security, collection isolation, validation, pagination, serialization, errors, GraphQL, Mercure, OpenAPI docs and functional tests. Covers Symfony and Laravel integrations.",
+  "version": "0.1.0",
+  "author": {
+    "name": "soyuka"
+  },
+  "repository": "https://github.com/soyuka/api-platform-skillset",
+  "license": "MIT",
+  "keywords": ["api-platform", "symfony", "laravel", "rest", "php"]
+}

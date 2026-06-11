@@ -1,6 +1,6 @@
 ---
 name: api-resource
-description: Creates or modifies API Platform resources with DTOs and Object Mapper. Use when adding new API endpoints, creating resources, defining input/output DTOs, configuring nested sub-resources with uriVariables, or mapping entities to API representations.
+description: "Creates or modifies API Platform resources with DTOs and Object Mapper. Use whenever the user wants to add an API endpoint, expose an entity or any data over HTTP, create or reshape a resource, define input/output DTOs, configure nested sub-resources with uriVariables, or map entities/documents to API representations — even if they just say 'add an endpoint for X' or 'expose X in the API'."
 ---
 
 # Creating API Platform Resources
@@ -20,16 +20,16 @@ entity. How you wire it to persistence is a separate decision:
 
 | Approach | When | Hookup |
 |---|---|---|
-| **Entity as resource** | Prototyping, plain CRUD, internal model == public shape | `#[ApiResource]` on the entity; built-in Doctrine provider/processor (zero wiring) |
-| **DTO + `stateOptions`** | Fields mostly match but you want a decoupled public shape | `stateOptions: new Options(entityClass:/documentClass:)` + `#[Map]` (Strategy 2) |
-| **DTO + Object Mapper** | Field renames/transforms between entity and API | `#[Map]` source/target + transformers (Strategy 1) |
-| **DTO + custom provider/processor** | Non-CRUD, external data, complex domain logic, CQRS | hand-written `ProviderInterface`/`ProcessorInterface` (Strategy 3, see **state-provider**/**state-processor**) |
+| **Entity as Resource** | Prototyping, plain CRUD, internal model == public shape | `#[ApiResource]` on the entity; built-in Doctrine provider/processor (zero wiring) |
+| **DTO with Object Mapper** | Decoupled public shape over a Doctrine entity/document — whether fields match 1:1 or need renames/transforms | `stateOptions: new Options(entityClass:/documentClass:)` **and** `#[Map]` on the DTO |
+| **Input DTOs per Operation** | Write model differs from read model (stricter create/update payloads) | per-operation `input:` + processor |
+| **Custom Provider/Processor** | Non-CRUD, external data, complex domain logic, CQRS | hand-written `ProviderInterface`/`ProcessorInterface` (see **state-provider**/**state-processor**) |
 
 Rule of thumb: entity-as-resource is convenient but couples your public contract to
 your schema — fine for prototypes, *probably not* for large or non-CRUD systems.
 Decouple with a DTO as soon as the two shapes diverge.
 
-## Strategy 0: Doctrine Entity as Resource (Simplest)
+## Entity as Resource (Simplest)
 
 Mark the entity itself — built-in Doctrine providers/processors handle everything.
 No provider, processor, or mapping to write:
@@ -53,9 +53,18 @@ class Book
 Use this for prototypes and straight CRUD. Migrate to a DTO (strategies below) once
 the API shape must differ from the schema.
 
-## Strategy 1: DTO as Resource with Object Mapper (Recommended)
+## DTO with Object Mapper (Recommended)
 
-Use `#[Map]` to transform between Document/Entity and API Resource:
+One mechanism, not two: API Platform's `ObjectMapperProvider` /
+`ObjectMapperProcessor` activate only when **both** are present — `stateOptions`
+naming the `entityClass:` (or `documentClass:`) **and** a `#[Map]` attribute on the
+DTO (and on the input entity for writes). On read it runs
+`map($entity, $resourceClass)`; on write `map($inputDto, $entityClass)` then persists
+via the Doctrine processor. There is no Object-Mapper mode without `stateOptions`.
+
+Fields that line up by name map automatically; add `#[Map(source: …)]` to rename or
+`transform:` to convert. The same config covers both the trivial 1:1 case and
+arbitrary renames/transforms:
 
 ```php
 <?php
@@ -121,27 +130,10 @@ final class CustomerTransformer implements TransformCallableInterface
 
 Use `#[Exclude]` so Symfony's container doesn't try to autowire transformer constructor args.
 
-## Strategy 2: stateOptions with `#[Map]` (Simple Field Mapping)
+## Input DTOs per Operation
 
-When DTO and Entity fields mostly match:
-
-```php
-#[ApiResource(
-    stateOptions: new Options(entityClass: YourEntity::class)
-)]
-#[Map(source: YourEntity::class)]
-class YourResource
-{
-    public int $id;
-
-    #[Map(source: 'entityFieldName')]
-    public string $apiFieldName;
-}
-```
-
-## Strategy 3: Different Input DTOs
-
-When write model differs from read model:
+When the write model differs from the read model, give individual operations their
+own `input:` DTO and processor (the resource class stays the read model):
 
 ```php
 #[ApiResource(
@@ -243,7 +235,6 @@ enum AvailabilityStatus: string
 
 `GET /availability_statuses` lists all cases; `GET /availability_statuses/InStock`
 returns one.
-*Pattern: `BackedEnumPropertyTest.php`, `BackedEnumResourceTest.php`.*
 
 ## High-Precision Numbers
 
@@ -257,7 +248,26 @@ class Invoice
     public ?\BcMath\Number $total; // → "300.55"
 }
 ```
-*Pattern: `tests/Fixtures/TestBundle/ApiResource/MathNumber.php` (guarded by `class_exists(\BcMath\Number::class)`).*
+
+## Laravel (Eloquent)
+
+The design-first split, DTOs, Object Mapper, per-operation `input:`, nested
+`uriVariables`/`handleLinks`, custom operations and backed-enum resources all work on
+Laravel. Deltas:
+
+- **Model as resource:** `#[ApiResource]` on a class extending
+  `Illuminate\Database\Eloquent\Model`; the Eloquent provider/processor handle CRUD
+  with zero wiring.
+- **Eloquent `Options`** (`ApiPlatform\Laravel\Eloquent\State\Options`) uses
+  `modelClass:` (not `entityClass:`/`documentClass:`); it carries `modelClass` +
+  `handleLinks` only — no `repositoryMethod`.
+- **Object Mapper** is supported: pair `stateOptions: new Options(modelClass: ProductModel::class)`
+  with `#[Map(source: ProductModel::class)]` on the DTO; per-property `#[Map]` and
+  `TransformCallableInterface` are identical.
+- **Properties:** Eloquent models have no typed properties, so declare `#[ApiProperty]`
+  at the **class level** with `property:` (`#[ApiProperty(property: 'title', identifier: true)]`).
+  DTO/`ApiResource` classes use property-level attributes. `\BcMath\Number` and backed
+  enums behave the same.
 
 ## Checklist
 

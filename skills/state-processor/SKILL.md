@@ -1,6 +1,6 @@
 ---
 name: state-processor
-description: Creates state processors for writing data in API Platform. Use when implementing custom persistence, soft-delete, file downloads, side effects like sending emails, creating related entities, or handling business logic on write operations.
+description: "Creates state processors for write operations in API Platform. Use whenever a POST/PUT/PATCH/DELETE needs custom behavior — persistence logic, soft-delete, file downloads, side effects like emails or events, creating related entities, hashing passwords — or any 'when X is created/updated/deleted, do Y' request, even if the user doesn't say 'processor'."
 ---
 
 # Creating State Processors
@@ -65,6 +65,16 @@ final class OrderCreateProcessor implements ProcessorInterface
 |---|---|---|
 | **ORM** | `api_platform.doctrine.orm.state.persist_processor` | `api_platform.doctrine.orm.state.remove_processor` |
 | **MongoDB ODM** | `api_platform.doctrine_mongodb.odm.state.persist_processor` | `api_platform.doctrine_mongodb.odm.state.remove_processor` |
+
+> **Laravel (Eloquent):** `ProcessorInterface` is identical and resources reference a
+> processor by class-string (`processor: YourProcessor::class`). The built-in Eloquent
+> processors are bound in the container by class name —
+> `ApiPlatform\Laravel\Eloquent\State\PersistProcessor` (handles create/update,
+> including BelongsTo/HasMany relations and `standard_put`) and
+> `…\State\RemoveProcessor`. To decorate, type-hint that concrete class in your
+> constructor instead of using a `#[Autowire(service: 'api_platform.doctrine.*')]`
+> attribute. Side-effect patterns (mailers, events) work the same via Laravel's
+> container. Returning a Symfony `Response` from a processor is also supported.
 
 ## Creating Related Entities in a Processor
 

@@ -1,6 +1,6 @@
 ---
 name: custom-validator
-description: Creates custom validation constraints for API Platform resources. Use when implementing business rule validation like rate limits, uniqueness checks, domain-specific format validation, or cross-field validation that Symfony's built-in constraints cannot express.
+description: "Creates custom validation constraints for API Platform resources. Use whenever a rule goes beyond built-in Symfony constraints — rate or plan limits, uniqueness checks, domain-specific formats, cross-field or conditional validation, or any 'reject the request when X' business rule on write operations, even if the user doesn't say 'validator'."
 ---
 
 # Custom Validation Constraints
@@ -104,24 +104,9 @@ class Account {}
 
 ## Validation Groups with Operations
 
-Target validation to specific operations:
-
-```php
-#[ApiResource(
-    operations: [
-        new Post(validationContext: ['groups' => ['Default', 'account:write']]),
-        new Patch(validationContext: ['groups' => ['Default', 'account:patch']]),
-    ]
-)]
-```
-
-Apply constraints only in specific groups:
-
-```php
-#[Assert\NotBlank(groups: ['account:write'])]    // Required on create only
-#[Assert\Email(groups: ['account:write', 'account:patch'])]  // Validated on both
-public ?string $address;
-```
+Target a constraint to specific operations by passing `groups:` (as shown above)
+and wiring those groups into each operation's `validationContext` — see
+**operations** for the full per-operation setup.
 
 ## Callback Validation
 
@@ -147,3 +132,29 @@ class SendMessage
     }
 }
 ```
+
+## Laravel
+
+Laravel does **not** use Symfony Constraints/`ConstraintValidator`. Validation is
+declared with [Laravel validation rules](https://laravel.com/docs/validation) via the
+`rules` option on `#[ApiResource]` or per-operation (rules can be an array, a closure,
+or a `FormRequest` class-string). The `ValidateProvider` runs them before the
+processor and emits the same 422 `ConstraintViolationList` shape.
+
+```php
+use ApiPlatform\Metadata\ApiResource;
+use ApiPlatform\Metadata\Post;
+
+#[ApiResource(rules: ['title' => 'required|min:2'])]
+#[Post(rules: ['isbn' => ['required', 'string']])] // per-operation override
+class Book extends Model {}
+```
+
+For business rules beyond built-in rules, write a Laravel **custom rule** (a class
+implementing `Illuminate\Contracts\Validation\ValidationRule`, scaffold with
+`php artisan make:rule`) or a closure rule, and reference it in `rules`. A
+`FormRequest` class-string is also accepted — its `authorize()`/`rules()` run, and an
+`AuthorizationException` maps to 403, `ValidationException` to 422. Validation groups
+and Symfony `validationContext` do not apply on Laravel; scope rules per operation
+instead. Partial PATCH can relax `required` to `sometimes` via
+`partial_patch_validation` in `config/api-platform.php`.

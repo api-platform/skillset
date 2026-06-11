@@ -1,6 +1,6 @@
 ---
 name: securing-collections
-description: Secures API Platform collections with Doctrine extensions and link handlers. Use when implementing multi-tenant data isolation, filtering soft-deleted records, restricting queries by organization/user, or validating parent resource ownership in nested URIs.
+description: "Secures API Platform collections with Doctrine extensions and link handlers. Use whenever the user mentions multi-tenant isolation, 'users must only see their own data', soft-delete filtering, scoping queries by organization or user, or validating parent ownership in nested URIs — even if they frame it as a security or privacy bug rather than a query concern."
 ---
 
 # Securing Collections
@@ -22,6 +22,7 @@ namespace App\Extension;
 
 use ApiPlatform\Doctrine\Orm\Extension\QueryCollectionExtensionInterface;
 use ApiPlatform\Doctrine\Orm\Extension\QueryItemExtensionInterface;
+use ApiPlatform\Doctrine\Orm\Util\QueryNameGeneratorInterface;
 use ApiPlatform\Metadata\Operation;
 use Doctrine\ORM\QueryBuilder;
 
@@ -59,51 +60,41 @@ final class AccountExtension implements QueryCollectionExtensionInterface, Query
 }
 ```
 
+Extensions are auto-registered by Symfony's autowiring. No service tag needed.
+
 ### MongoDB ODM Extension
 
+Same structure as the ORM version; only the interfaces, the apply-method
+signatures, and the query API differ. Implement
+`AggregationCollectionExtensionInterface` / `AggregationItemExtensionInterface`
+(from `ApiPlatform\Doctrine\Odm\Extension`), and build the filter on a
+`Doctrine\ODM\MongoDB\Aggregation\Builder` instead of a `QueryBuilder`:
+
 ```php
-<?php
-namespace App\Extension;
-
-use ApiPlatform\Doctrine\Odm\Extension\AggregationCollectionExtensionInterface;
-use ApiPlatform\Doctrine\Odm\Extension\AggregationItemExtensionInterface;
-use ApiPlatform\Metadata\Operation;
-use Doctrine\ODM\MongoDB\Aggregation\Builder;
-
-final class AccountExtension implements AggregationCollectionExtensionInterface, AggregationItemExtensionInterface
+public function applyToCollection(Builder $aggregationBuilder, string $resourceClass, ?Operation $operation = null, array &$context = []): void
 {
-    public function __construct(private readonly UserHelper $userHelper) {}
+    $this->applyFilters($aggregationBuilder, $resourceClass);
+}
 
-    public function applyToCollection(Builder $aggregationBuilder, string $resourceClass, ?Operation $operation = null, array &$context = []): void
-    {
-        $this->applyFilters($aggregationBuilder, $resourceClass);
+// applyToItem adds `array $identifiers` after $resourceClass; both delegate here:
+private function applyFilters(Builder $aggregationBuilder, string $resourceClass): void
+{
+    if (Account::class !== $resourceClass) {
+        return;
+    }
+    $user = $this->userHelper->getUser();
+    if (!$user) {
+        return;
     }
 
-    public function applyToItem(Builder $aggregationBuilder, string $resourceClass, array $identifiers, ?Operation $operation = null, array &$context = []): void
-    {
-        $this->applyFilters($aggregationBuilder, $resourceClass);
-    }
-
-    private function applyFilters(Builder $aggregationBuilder, string $resourceClass): void
-    {
-        if (Account::class !== $resourceClass) {
-            return;
-        }
-
-        $user = $this->userHelper->getUser();
-        if (!$user) {
-            return;
-        }
-
-        $aggregationBuilder
-            ->match()
-            ->field('isDeleted')->equals(false)
-            ->field('organization')->equals($user->getCurrentOrganization()->getId());
-    }
+    $aggregationBuilder->match()
+        ->field('isDeleted')->equals(false)
+        ->field('organization')->equals($user->getCurrentOrganization()->getId());
 }
 ```
 
-Extensions are auto-registered by Symfony's autowiring. No service tag needed.
+The ODM apply methods take `string $resourceClass` directly (no
+`QueryNameGenerator`) and receive `$context` by reference.
 
 ## Link Handlers (Nested Resource Security)
 
@@ -187,3 +178,60 @@ use ApiPlatform\Doctrine\Odm\State\Options;
 | **`security` attribute** | Per-operation checks on already-fetched objects: `security: 'object.user == user'` |
 
 These mechanisms stack: an extension filters the query, a link handler scopes it to the parent, and `security` validates the final object.
+
+## Laravel (Eloquent)
+
+The two mechanisms exist on Laravel too, but there are **no Doctrine extensions**.
+The global-query-filter equivalent is `ApiPlatform\Laravel\Eloquent\Extension\QueryExtensionInterface`
+— one `apply()` method covering both item and collection (the Eloquent providers run
+it for every query):
+
+```php
+<?php
+namespace App\Extension;
+
+use ApiPlatform\Laravel\Eloquent\Extension\QueryExtensionInterface;
+use ApiPlatform\Metadata\Operation;
+use Illuminate\Database\Eloquent\Builder;
+
+final class AccountExtension implements QueryExtensionInterface
+{
+    public function __construct(private readonly UserHelper $userHelper) {}
+
+    public function apply(Builder $builder, array $uriVariables, Operation $operation, $context = []): Builder
+    {
+        if (Account::class !== $operation->getClass() || !($user = $this->userHelper->getUser())) {
+            return $builder;
+        }
+
+        return $builder
+            ->where('organization_id', $user->getCurrentOrganization()->id)
+            ->where('is_deleted', false);
+    }
+}
+```
+
+Tag it so the providers pick it up by binding to the `QueryExtensionInterface` tag in
+a service provider (`$this->app->tag([AccountExtension::class], QueryExtensionInterface::class)`);
+there is no Symfony autowiring.
+
+For nested-resource ownership, implement
+`ApiPlatform\Laravel\Eloquent\State\LinksHandlerInterface` —
+`handleLinks(Builder $builder, array $uriVariables, array $context): Builder` —
+returning the scoped builder (it operates on an Eloquent `Builder`, not an aggregation
+pipeline). Assign it with the Eloquent `Options`:
+
+```php
+use ApiPlatform\Laravel\Eloquent\State\Options;
+
+new Get(
+    uriTemplate: '/accounts/{accountId}/messages/{id}',
+    uriVariables: ['accountId', 'id'],
+    stateOptions: new Options(handleLinks: MessageLinkHandler::class, modelClass: Message::class),
+)
+```
+
+Note Eloquent `Options` uses `modelClass:` (not `documentClass:`/`entityClass:`).
+Per-operation `security` expressions and Laravel **policies** (`viewAny`/`view`/
+`create`/`update`/`delete`, or an explicit `policy:` on an operation) layer on top —
+see the **operations** skill's Laravel section.
