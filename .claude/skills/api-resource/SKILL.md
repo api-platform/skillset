@@ -7,9 +7,51 @@ description: Creates or modifies API Platform resources with DTOs and Object Map
 
 ## Design-First Principle
 
-1. Design the **public DTO shape** first — this is your API contract
-2. Map it to your persistence layer (Doctrine entity/document) via Object Mapper or custom state providers/processors
-3. DTOs don't need to be Doctrine entities
+An API Platform resource is built from three concerns (see
+<https://api-platform.com/docs/core/design/>):
+
+1. **Resource declaration** — a plain PHP object marked `#[ApiResource]` describing
+   the public shape. Single source of truth for Hydra, OpenAPI and GraphQL.
+2. **Data retrieval** — a state **provider** hydrates that object (Get, GetCollection).
+3. **Data persistence** — a state **processor** writes it (Post, Put, Patch, Delete).
+
+Design the public shape first; the resource class doesn't have to be a Doctrine
+entity. How you wire it to persistence is a separate decision:
+
+| Approach | When | Hookup |
+|---|---|---|
+| **Entity as resource** | Prototyping, plain CRUD, internal model == public shape | `#[ApiResource]` on the entity; built-in Doctrine provider/processor (zero wiring) |
+| **DTO + `stateOptions`** | Fields mostly match but you want a decoupled public shape | `stateOptions: new Options(entityClass:/documentClass:)` + `#[Map]` (Strategy 2) |
+| **DTO + Object Mapper** | Field renames/transforms between entity and API | `#[Map]` source/target + transformers (Strategy 1) |
+| **DTO + custom provider/processor** | Non-CRUD, external data, complex domain logic, CQRS | hand-written `ProviderInterface`/`ProcessorInterface` (Strategy 3, see **state-provider**/**state-processor**) |
+
+Rule of thumb: entity-as-resource is convenient but couples your public contract to
+your schema — fine for prototypes, *probably not* for large or non-CRUD systems.
+Decouple with a DTO as soon as the two shapes diverge.
+
+## Strategy 0: Doctrine Entity as Resource (Simplest)
+
+Mark the entity itself — built-in Doctrine providers/processors handle everything.
+No provider, processor, or mapping to write:
+
+```php
+use ApiPlatform\Metadata\ApiResource;
+use Doctrine\ORM\Mapping as ORM;
+
+#[ORM\Entity]
+#[ApiResource]
+class Book
+{
+    #[ORM\Id, ORM\GeneratedValue, ORM\Column]
+    public ?int $id = null;
+
+    #[ORM\Column]
+    public string $title = '';
+}
+```
+
+Use this for prototypes and straight CRUD. Migrate to a DTO (strategies below) once
+the API shape must differ from the schema.
 
 ## Strategy 1: DTO as Resource with Object Mapper (Recommended)
 
@@ -169,6 +211,53 @@ new Get(
 ```
 
 Use `write: true` on Get operations that need a processor (e.g., file downloads).
+
+## Backed Enums
+
+### As a property
+
+A backed enum property serializes to its `->value` automatically:
+
+```php
+#[ApiResource]
+class Person
+{
+    public GenderType $genderType; // backed enum → {"genderType": "female"}
+}
+```
+
+### As a resource
+
+Expose a backed enum as a read-only resource so clients can discover allowed values:
+
+```php
+use ApiPlatform\Metadata\ApiResource;
+
+#[ApiResource]
+enum AvailabilityStatus: string
+{
+    case InStock = 'InStock';
+    case OutOfStock = 'OutOfStock';
+}
+```
+
+`GET /availability_statuses` lists all cases; `GET /availability_statuses/InStock`
+returns one.
+*Pattern: `BackedEnumPropertyTest.php`, `BackedEnumResourceTest.php`.*
+
+## High-Precision Numbers
+
+For monetary/scientific values that must avoid float drift, type a property as
+`\BcMath\Number` (PHP 8.4 native, requires ext-bcmath). It serializes as a string
+to preserve precision:
+
+```php
+class Invoice
+{
+    public ?\BcMath\Number $total; // → "300.55"
+}
+```
+*Pattern: `tests/Fixtures/TestBundle/ApiResource/MathNumber.php` (guarded by `class_exists(\BcMath\Number::class)`).*
 
 ## Checklist
 

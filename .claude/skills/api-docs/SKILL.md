@@ -7,6 +7,27 @@ description: Customizes OpenAPI documentation for API Platform resources. Use wh
 
 API Platform generates OpenAPI v3 documentation automatically. Customize it using attributes.
 
+## Global Info & Security Schemes (YAML)
+
+Set the API-wide title, version, description and auth schemes in
+`config/packages/api_platform.yaml`:
+
+```yaml
+api_platform:
+    openapi:
+        info:
+            title: 'My API'
+            version: '1.0.0'
+            description: 'What this API does.'
+        components:
+            securitySchemes:
+                Bearer:
+                    type: http
+                    scheme: bearer
+                    bearerFormat: JWT
+```
+*Pattern: `OpenApiTest.php`.*
+
 ## Operation-Level Customization
 
 ```php

@@ -207,6 +207,32 @@ $this->assertMatchesResourceItemJsonSchema(Order::class);
 $this->assertMatchesResourceCollectionJsonSchema(Order::class);
 ```
 
+## Resetting the Schema Between Tests (ORM)
+
+For a clean database per test, drop and recreate the schema in `setUp()`. API
+Platform's own suite uses an internal `ApiPlatform\Tests\RecreateSchemaTrait` —
+that namespace is **not** autoloaded in your app, so copy the mechanism rather than
+importing it:
+
+```php
+use Doctrine\ORM\Tools\SchemaTool;
+
+protected function setUp(): void
+{
+    parent::setUp();
+
+    $manager = static::getContainer()->get('doctrine')->getManager();
+    $metadata = $manager->getMetadataFactory()->getAllMetadata();
+
+    $schemaTool = new SchemaTool($manager);
+    $schemaTool->dropDatabase();
+    $schemaTool->createSchema($metadata);
+}
+```
+
+For MongoDB ODM, drop the collections via
+`$manager->getSchemaManager()->dropDocumentCollection(...)` instead.
+
 ## Test File Location
 
 Place tests in `tests/Functional/` following the naming convention `{ResourceName}Test.php`.

@@ -153,9 +153,91 @@ final class RawMessageProvider implements ProviderInterface
 class YourResource {}
 ```
 
+## Computed / Sortable Fields via a Repository Method (Doctrine)
+
+When a field is a SQL aggregate that must also be **sortable** in the database, a
+plain provider can't help — sorting happens in the query. The cleanest way is to
+point the built-in Doctrine provider at a custom repository method that returns a
+`QueryBuilder`, via `stateOptions` (API Platform 4.4+). The provider runs your
+query builder, then layers pagination, filters and link handlers on top of it.
+
+```php
+// Repository: return a QueryBuilder, not results
+class CartRepository extends EntityRepository
+{
+    public function getCartsWithTotalQuantity(): QueryBuilder
+    {
+        return $this->createQueryBuilder('o')
+            ->leftJoin('o.items', 'items')
+            ->addSelect('COALESCE(SUM(items.quantity), 0) AS totalQuantity')
+            ->addGroupBy('o.id');
+    }
+}
+```
+
+```php
+use ApiPlatform\Doctrine\Orm\State\Options;
+
+#[ORM\Entity(repositoryClass: CartRepository::class)]
+#[GetCollection(
+    stateOptions: new Options(repositoryMethod: 'getCartsWithTotalQuantity'),
+    processor: [self::class, 'process'],
+    write: true,
+    parameters: [
+        'sort[:property]' => new QueryParameter(filter: new SortFilter(), properties: ['totalQuantity']),
+    ],
+)]
+class Cart
+{
+    public int|string|null $totalQuantity;
+
+    // A non-HIDDEN scalar addSelect makes rows arrive as [entity, 'totalQuantity' => N].
+    // Flatten them back onto the entity with a processor:
+    public static function process(mixed $data, Operation $operation, array $uriVariables = [], array $context = []): mixed
+    {
+        foreach ($data as &$value) {
+            $cart = $value[0];
+            $cart->totalQuantity = $value['totalQuantity'] ?? 0;
+            $value = $cart;
+        }
+
+        return $data;
+    }
+}
+```
+*Pattern: `tests/Fixtures/TestBundle/Entity/Cart.php` + `Repository/CartRepository.php`, `Doctrine/ComputedFieldTest.php`.*
+
+> Use a **Doctrine collection extension** (see **securing-collections**) instead when
+> the query change must apply to *every* operation/query for the resource (e.g.
+> multi-tenant isolation). `repositoryMethod` scopes one operation's base query;
+> an extension mutates them all.
+
+## Per-Property Serialization Context
+
+Embed the same related resource at different depths by switching the
+normalization group on one property with `#[Context]`:
+
+```php
+use Symfony\Component\Serializer\Attribute\Context;
+use Symfony\Component\Serializer\Attribute\Groups;
+
+#[ApiResource(normalizationContext: ['groups' => ['initial']])]
+class Order
+{
+    #[Groups(['initial'])]
+    public ?Customer $customer = null;
+
+    #[Groups(['initial'])]
+    #[Context(['normalization' => ['groups' => ['summary']]])]
+    public ?Customer $billedTo = null; // serialized with the 'summary' group only
+}
+```
+*Pattern: `Doctrine/ContextSwitchTest.php`.*
+
 ## Best Practices
 
 1. Return `null` for missing items — API Platform handles the 404
 2. Use `CollectionOperationInterface` to distinguish collection vs item
 3. When decorating, always delegate to the built-in provider first
 4. For computed fields on collections, iterate over the paginator (it's lazy)
+5. For *sortable* computed fields, use `stateOptions(repositoryMethod:)` — not a provider
