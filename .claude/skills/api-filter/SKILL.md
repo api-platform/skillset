@@ -29,9 +29,8 @@ Client: `GET /orders?status=shipped`
 > attribute and the multi-strategy filters (`SearchFilter`, `BooleanFilter`,
 > `NumericFilter`, `OrderFilter`, `BackedEnumFilter`) are **deprecated in 4.4 and
 > removed in 6.0**. Don't teach or add them in new code. If you encounter them, the
-> migration target is the `QueryParameter` + single-purpose filter set below
-> (an `api-platform/upgrade` codemod automates the rewrite). The mapping is in the
-> table at the bottom.
+> migration target is the `QueryParameter` + single-purpose filter set below.
+> The mapping is in the table at the bottom.
 
 ## Canonical filter set
 
