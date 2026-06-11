@@ -5,7 +5,7 @@
   "author": {
     "name": "soyuka"
   },
-  "repository": "https://github.com/soyuka/api-platform-skillset",
+  "repository": "https://github.com/api-platform/skillset",
   "license": "MIT",
   "keywords": ["api-platform", "symfony", "laravel", "rest", "php"]
 }
