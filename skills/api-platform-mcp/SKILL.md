@@ -1,5 +1,5 @@
 ---
-name: mcp
+name: api-platform-mcp
 description: "Exposes API Platform resources to AI agents (LLMs) via the Model Context Protocol — declaring MCP tools with `#[McpTool]` / `McpToolCollection`, read-only `#[McpResource]`, the `mcp:` array on `#[ApiResource]`, input/output DTOs, structured vs custom (CallToolResult) responses, JSON-Schema overrides via `#[ApiProperty]`, and MCP-specific validation. Use whenever the user wants an LLM/AI agent to discover or call their API, mentions MCP, Model Context Protocol, tools/resources for an agent, `tools/call`, `tools/list`, or asks to make a resource 'callable by an AI' — even if they don't name MCP explicitly."
 ---
 

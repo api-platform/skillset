@@ -27,7 +27,7 @@ Skills load automatically when relevant; they appear namespaced as `api-platform
 | `errors` | RFC 7807 Problem Details, `#[ErrorResource]`, exception-to-status mapping |
 | `graphql` | GraphQL operations, resolvers, Relay pagination |
 | `mercure` | Real-time updates over Mercure (Symfony) |
-| `mcp` | Exposing resources to AI agents via the Model Context Protocol — `#[McpTool]`, `McpToolCollection`, `#[McpResource]` |
+| `api-platform-mcp` | Exposing resources to AI agents via the Model Context Protocol — `#[McpTool]`, `McpToolCollection`, `#[McpResource]` |
 | `api-docs` | OpenAPI customization, hiding operations, factory decoration |
 | `api-test` | Functional tests with `ApiTestCase` (Symfony) and HTTP tests (Laravel) |
 
