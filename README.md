@@ -31,6 +31,12 @@ Skills load automatically when relevant; they appear namespaced as `api-platform
 | `api-docs` | OpenAPI customization, hiding operations, factory decoration |
 | `api-test` | Functional tests with `ApiTestCase` (Symfony) and HTTP tests (Laravel) |
 
+## Other agents (Cursor, GitHub Copilot, OpenAI Codex, Gemini, …)
+
+The plugin format is specific to Claude Code. For any other agent, copy this repo's [`AGENTS.md`](AGENTS.md) into the root of your API Platform project — it is the de-facto file Cursor, GitHub Copilot, OpenAI Codex and Gemini read when a session starts. It points the agent at the canonical documentation instead of stale training data.
+
+`AGENTS.md` is intentionally lean: instructions plus a topic index. The 15 skills above go deeper, with verified code for each topic — that depth is currently Claude-only. A thin [`CLAUDE.md`](CLAUDE.md) (`@AGENTS.md`) keeps Claude users on the same baseline before the plugin's skills layer on top.
+
 ## Symfony and Laravel
 
 Skills are framework-aware: shared API Platform concepts are presented once, and where the integrations differ (Eloquent filters, Laravel validation rules, policies, `config/api-platform.php`), skills carry dedicated Laravel sections. Mercure is currently Symfony-only.
