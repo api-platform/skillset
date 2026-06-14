@@ -9,6 +9,62 @@ Operation-level configuration that sits between the resource shape (see
 **api-resource**) and the read/write logic (see **state-provider** /
 **state-processor**).
 
+## Read & write phases (the provider/processor lifecycle)
+
+Every operation runs two phases, each toggled by a boolean flag:
+
+| Phase | Flag | Runs | Maps to (CQRS) |
+|---|---|---|---|
+| **Read** | `read` | a **provider** fetches the data | Query |
+| **Write** | `write` | a **processor** persists / acts on the data | Command |
+
+A full request is `read → deserialize → validate → write → serialize`. The provider
+supplies the object the rest of the chain operates on; the processor performs the
+side effect (persist, delete, send mail, build a file). This is API Platform's CQRS
+split: **GET-style reads go through a provider, state changes go through a
+processor.**
+
+### The flags default from the request, not the verb
+
+You leave `read`/`write` unset and API Platform resolves them at runtime from the
+HTTP request (see `MainController` / `WriteListener` in core):
+
+- **`write` defaults to "the method is not safe"** — `false` for `GET`/`HEAD`,
+  `true` for `POST`, `PUT`, `PATCH`, `DELETE`.
+- **`read` defaults to "the operation has URI variables, or the method is safe"** —
+  so item operations (which carry `{id}`) and all `GET`s read, but a collection
+  `POST` (no URI variables, unsafe) does **not**.
+
+| Operation | `read` | `write` |
+|---|---|---|
+| `Get` (item) | `true` *(has `{id}`)* | **`false`** |
+| `GetCollection` | `true` *(safe)* | **`false`** |
+| `Post` (collection) | **`false`** *(no URI vars, unsafe)* | `true` |
+| `Put`, `Patch` (item) | `true` *(has `{id}`)* | `true` |
+| `Delete` (item) | `true` *(has `{id}`)* | `true` |
+
+So a `Get` skips the processor by default, and a collection `Post` runs a processor
+without a provider. Override either flag to decouple the phase from this default:
+
+```php
+// Run a processor on a GET (file download, report generation, counter bump):
+new Get(
+    uriTemplate: '/orders/{id}/download',
+    write: true,                 // turn the write phase ON — processor now fires
+    processor: OrderDownloadProcessor::class,
+)
+
+// Skip the built-in fetch on an item write (upsert: processor handles a missing row):
+new Put(
+    read: false,                 // no provider runs; $data comes from deserialization only
+    processor: UpsertProcessor::class,
+)
+```
+
+`write: true` is the common case: a `Get` whose `write` defaults to `false` would
+**never invoke its `processor`** — flipping the flag is what enables it. Conversely
+`read: false` stops the built-in provider on an item operation from a needless fetch.
+
 ## Securing operations
 
 The `security` attribute takes a Symfony ExpressionLanguage string evaluated
