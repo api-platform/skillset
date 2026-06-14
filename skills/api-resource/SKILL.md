@@ -202,7 +202,9 @@ new Get(
 ),
 ```
 
-Use `write: true` on Get operations that need a processor (e.g., file downloads).
+Use `write: true` on Get operations that need a processor (e.g., file downloads):
+a Get's write phase is off by default, so the processor never fires until you flip
+the flag. See **operations** → *Read & write phases* for the read/write lifecycle.
 
 ## Backed Enums
 

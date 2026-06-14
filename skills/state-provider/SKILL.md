@@ -1,11 +1,29 @@
 ---
 name: state-provider
-description: "Creates state providers for read operations in API Platform. Use whenever GET data needs custom retrieval or shaping — computed or enriched fields, transforming entities to different DTOs, decorating built-in Doctrine providers, sortable computed fields via repositoryMethod — or any 'the response should also include X' request, even if the user doesn't say 'provider'."
+description: "Creates state providers for read operations in API Platform — the read/Query side of its CQRS-style provider/processor split. Use whenever GET data needs custom retrieval or shaping — computed or enriched fields, transforming entities to different DTOs, decorating built-in Doctrine providers, sortable computed fields via repositoryMethod — or any 'the response should also include X' request, or to understand when a provider runs vs a processor (the read vs write phase), even if the user doesn't say 'provider'."
 ---
 
 # Creating State Providers
 
-State Providers retrieve data for read operations (Get, GetCollection).
+State Providers retrieve data for read operations (Get, GetCollection) — the
+**read phase** of an operation, the **Query** side of API Platform's CQRS-style
+split (a **state-processor** handles the **Command**/write side).
+
+A provider runs when the operation's `read` flag is `true`. You normally leave it
+unset and API Platform resolves it from the request: `read` defaults to *"the
+operation has URI variables, or the HTTP method is safe"*, and `write` (the
+processor) to *"the method is not safe"*.
+
+| Operation | provider runs (`read`) | processor runs (`write`) |
+|---|---|---|
+| `Get` (item) / `GetCollection` | **yes** | no |
+| `Post` (collection) | **no** *(no URI vars, unsafe)* | yes |
+| `Put`, `Patch`, `Delete` (item) | **yes** | yes |
+
+Override the flag to decouple the phase from the verb: `read: false` skips the
+built-in fetch on an item write (upsert), and `write: true` runs a processor on a
+`Get` (see **state-processor**). See **operations** → *Read & write phases* for the
+full `read → deserialize → validate → write → serialize` lifecycle.
 
 ## Basic Structure
 

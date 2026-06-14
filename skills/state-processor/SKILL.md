@@ -1,11 +1,30 @@
 ---
 name: state-processor
-description: "Creates state processors for write operations in API Platform. Use whenever a POST/PUT/PATCH/DELETE needs custom behavior — persistence logic, soft-delete, file downloads, side effects like emails or events, creating related entities, hashing passwords — or any 'when X is created/updated/deleted, do Y' request, even if the user doesn't say 'processor'."
+description: "Creates state processors for write operations in API Platform — the write/Command side of its CQRS-style provider/processor split. Use whenever a POST/PUT/PATCH/DELETE needs custom behavior — persistence logic, soft-delete, file downloads, side effects like emails or events, creating related entities, hashing passwords — or any 'when X is created/updated/deleted, do Y' request, or to understand why a GET processor doesn't fire without write: true (the write vs read phase), even if the user doesn't say 'processor'."
 ---
 
 # Creating State Processors
 
-State Processors handle persistence and side effects for write operations (Post, Patch, Put, Delete).
+State Processors handle persistence and side effects for write operations (Post,
+Patch, Put, Delete) — the **write phase** of an operation, the **Command** side of
+API Platform's CQRS-style split (a **state-provider** handles the **Query**/read
+side).
+
+A processor runs when the operation's `write` flag is `true`. You normally leave it
+unset and API Platform resolves it from the request: `write` defaults to *"the HTTP
+method is not safe"*, and `read` (the provider) to *"the operation has URI
+variables, or the method is safe"*.
+
+| Operation | processor runs (`write`) | provider runs (`read`) |
+|---|---|---|
+| `Get` (item) / `GetCollection` | **no** | yes |
+| `Post` (collection) | yes | no *(no URI vars, unsafe)* |
+| `Put`, `Patch`, `Delete` (item) | yes | yes |
+
+A `Get` defaults to `write: false`, so its `processor` **never fires** until you set
+`write: true` (file downloads, report generation — see *Returning HTTP Responses*
+below). See **operations** → *Read & write phases* for the full `read → deserialize
+→ validate → write → serialize` lifecycle.
 
 ## Basic Structure
 
