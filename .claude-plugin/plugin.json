@@ -1,7 +1,7 @@
 {
   "name": "api-platform",
   "description": "API Platform development skills — resources & DTOs, filters, state providers/processors, operation security, collection isolation, validation, pagination, serialization, errors, GraphQL, Mercure, MCP (AI agent tools/resources), OpenAPI docs and functional tests. Covers Symfony and Laravel integrations.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": {
     "name": "soyuka"
   },
