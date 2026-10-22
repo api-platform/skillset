@@ -1,22 +1,45 @@
 <!-- BEGIN:api-platform-agent-rules -->
 
-# API Platform: read the docs before writing code
+# API Platform: build endpoints with API Platform, not around it
 
-This project uses [API Platform](https://api-platform.com) 4.x. Your training data is
-likely outdated — <https://api-platform.com/docs> is the source of truth. Before adding or
-changing API code, find and read the relevant page there.
+This project uses [API Platform](https://api-platform.com) 4.x/5.x. Build every endpoint with
+API Platform, never with a hand-written framework controller: a controller skips the
+serialization, validation, pagination, filters, error format and OpenAPI that API Platform
+gives you, and agents that write one end up re-implementing all of it.
 
-For a machine-readable index of the documentation, fetch
-<https://api-platform.com/docs/llms.txt> (full text:
-<https://api-platform.com/docs/llms-full.txt>).
+## How to build
 
-## Core conventions
+- A resource is a class marked `#[ApiResource]` with its operations (`Get`, `GetCollection`,
+  `Post`, `Patch`, `Delete`). When the data is a table, map the resource to a Doctrine
+  entity (Symfony) or an Eloquent model (Laravel): the built-in provider and processor then
+  read, write, paginate and filter.
+- An existing database schema is mapped as it is (`#[ORM\Table]`/`#[ORM\Column(name: ...)]`,
+  or the model's `$table`), without running migrations.
+- Custom read: a state provider (`ProviderInterface`) set as `provider:` on the operation.
+  Custom write or side effects: a state processor (`ProcessorInterface`) set as
+  `processor:`. Either may return a framework `Response` (custom status, file download).
+- Filters: `parameters:` on the operation with `QueryParameter` and a built-in filter
+  (`PartialSearchFilter`, `ExactFilter`, `RangeFilter`, `DateFilter`, `OrderFilter`...),
+  `constraints:` to validate the value. Write a filter class for anything else.
+- Validation: constraints on the resource or on an `input:` DTO.
+- Formats (JSON-LD/Hydra, JSON:API, HAL, JSON) and OpenAPI are configuration, not code:
+  `formats`, `error_formats`, `docs_formats` and `defaults` in the API Platform config.
+  JSON:API needs the `api-platform/json-api` package on Symfony.
+- Inspect before guessing: `bin/console debug:api-resource` (Symfony), the attribute classes
+  in `vendor/api-platform/metadata/`.
 
-API Platform is **design-first**: a resource is a plain PHP class marked `#[ApiResource]`
-describing the public shape — it need not be a Doctrine entity or an Eloquent model.
-Reading is done by a **state provider**, writing by a **state processor**.
+## Pitfalls
 
-Match the task to its canonical page:
+- The Symfony recipe prefixes routes with `/api` (`config/routes/api_platform.yaml`).
+- Null properties are skipped unless `normalization_context: {skip_null_values: false}`.
+- Type errors in a request body are 400 unless `collect_denormalization_errors` is enabled
+  (422 with violations).
+- Query parameter violations answer 422.
+
+## Documentation
+
+Your training data is likely outdated: <https://api-platform.com/docs> is the source of
+truth (index: <https://api-platform.com/docs/llms.txt>). Match the task to its canonical page:
 
 | Task | Read |
 |---|---|
